@@ -44,21 +44,9 @@ async function parseRSSFeed(url: string, sourceName: string): Promise<RSSItem[]>
       const linkMatch = itemContent.match(/<link[^>]*>([\s\S]*?)<\/link>/i);
       const link = linkMatch ? linkMatch[1].replace(/<!\[CDATA\[(.*?)\]\]>/g, '$1').trim() : '';
       
-      // Extract pubDate - try multiple date formats
-      let pubDate = new Date().toISOString();
+      // Extract pubDate
       const dateMatch = itemContent.match(/<pubDate[^>]*>([\s\S]*?)<\/pubDate>/i);
-      if (dateMatch) {
-        const dateStr = dateMatch[1].trim();
-        try {
-          const parsedDate = new Date(dateStr);
-          // Validate the date is valid
-          if (!isNaN(parsedDate.getTime())) {
-            pubDate = parsedDate.toISOString();
-          }
-        } catch (e) {
-          console.error(`Invalid date format for ${sourceName}: ${dateStr}`);
-        }
-      }
+      const pubDate = dateMatch ? dateMatch[1].trim() : new Date().toISOString();
       
       if (title && link) {
         items.push({
@@ -112,21 +100,11 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Sort by date (newest first) - with proper validation
+    // Sort by date (newest first)
     allItems.sort((a, b) => {
-      try {
-        const dateA = new Date(a.pubDate).getTime();
-        const dateB = new Date(b.pubDate).getTime();
-        
-        // If either date is invalid, push it to the end
-        if (isNaN(dateA)) return 1;
-        if (isNaN(dateB)) return -1;
-        
-        return dateB - dateA;
-      } catch (error) {
-        console.error('Error sorting dates:', error);
-        return 0;
-      }
+      const dateA = new Date(a.pubDate).getTime();
+      const dateB = new Date(b.pubDate).getTime();
+      return dateB - dateA;
     });
 
     console.log(`Total items fetched: ${allItems.length}`);

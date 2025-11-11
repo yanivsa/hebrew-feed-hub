@@ -1,8 +1,7 @@
 import { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { Link } from "react-router-dom";
-import { LogOut, Plus, Trash2 } from "lucide-react";
+import { ArrowRight, Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -27,39 +26,9 @@ const Admin = () => {
   const [sources, setSources] = useState<RSSSource[]>([]);
   const [loading, setLoading] = useState(true);
   const [newSource, setNewSource] = useState({ name: "", url: "" });
-  const [user, setUser] = useState<any>(null);
-  const navigate = useNavigate();
   const { toast } = useToast();
 
-  useEffect(() => {
-    // Check authentication
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      if (!session) {
-        navigate("/auth");
-        return;
-      }
-      setUser(session.user);
-    });
-
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (!session) {
-        navigate("/auth");
-      } else {
-        setUser(session.user);
-      }
-    });
-
-    return () => subscription.unsubscribe();
-  }, [navigate]);
-
-  const handleSignOut = async () => {
-    await supabase.auth.signOut();
-    navigate("/");
-  };
-
   const fetchSources = async () => {
-    if (!user) return;
-    
     try {
       const { data, error } = await supabase
         .from('rss_sources')
@@ -81,10 +50,8 @@ const Admin = () => {
   };
 
   useEffect(() => {
-    if (user) {
-      fetchSources();
-    }
-  }, [user]);
+    fetchSources();
+  }, []);
 
   const handleAddSource = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -178,22 +145,12 @@ const Admin = () => {
       <header className="bg-primary text-primary-foreground py-4 px-6 shadow-md">
         <div className="max-w-7xl mx-auto flex items-center justify-between">
           <h1 className="text-3xl font-bold">ניהול מקורות RSS</h1>
-          <div className="flex gap-2">
-            <Link to="/">
-              <Button variant="ghost" className="hover:bg-primary-foreground/10">
-                חזרה לדף הראשי
-              </Button>
-            </Link>
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={handleSignOut}
-              className="hover:bg-primary-foreground/10"
-              title="התנתק"
-            >
-              <LogOut className="h-5 w-5" />
+          <Link to="/">
+            <Button variant="ghost" className="hover:bg-primary-foreground/10">
+              <ArrowRight className="h-5 w-5 ml-2" />
+              חזרה לדף הראשי
             </Button>
-          </div>
+          </Link>
         </div>
       </header>
 
