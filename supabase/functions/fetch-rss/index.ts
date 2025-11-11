@@ -12,10 +12,57 @@ interface RSSItem {
   source: string;
 }
 
-async function parseRSSFeed(url: string, sourceName: string): Promise<RSSItem[]> {
+function normalizePubDate(rawDate: string | null): Date | null {
+  if (!rawDate) {
+    return null;
+  }
+
+  const trimmedDate = rawDate.trim();
+  if (!trimmedDate) {
+    return null;
+  }
+
+  const directParse = Date.parse(trimmedDate);
+  if (!Number.isNaN(directParse)) {
+    return new Date(directParse);
+  }
+
+  // Some feeds omit the timezone suffix (e.g. `2024-06-15T10:30:00`). Try to
+  // parse them as UTC by appending a "Z" designator.
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/.test(trimmedDate)) {
+    const utcParse = Date.parse(`${trimmedDate}Z`);
+    if (!Number.isNaN(utcParse)) {
+      return new Date(utcParse);
+    }
+  }
+
+  console.warn(`Unable to parse publication date: ${trimmedDate}`);
+  return null;
+}
+
+function validateSourceUrl(url: string, sourceName: string): URL | null {
   try {
-    console.log(`Fetching RSS from: ${url}`);
-    const response = await fetch(url, {
+    const parsedUrl = new URL(url);
+    if (parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:') {
+      console.warn(`Skipping ${sourceName}: unsupported protocol ${parsedUrl.protocol}`);
+      return null;
+    }
+    return parsedUrl;
+  } catch (error) {
+    console.warn(`Skipping ${sourceName}: invalid URL`, error);
+    return null;
+  }
+}
+
+async function parseRSSFeed(url: string, sourceName: string): Promise<RSSItem[]> {
+  const normalizedUrl = validateSourceUrl(url, sourceName);
+  if (!normalizedUrl) {
+    return [];
+  }
+
+  try {
+    console.log(`Fetching RSS from: ${normalizedUrl.toString()}`);
+    const response = await fetch(normalizedUrl, {
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
       },
@@ -32,7 +79,8 @@ async function parseRSSFeed(url: string, sourceName: string): Promise<RSSItem[]>
     const items: RSSItem[] = [];
     const itemRegex = /<item[^>]*>([\s\S]*?)<\/item>/gi;
     const matches = text.matchAll(itemRegex);
-    
+    const twentyFourHoursAgo = Date.now() - 24 * 60 * 60 * 1000;
+
     for (const match of matches) {
       const itemContent = match[1];
       
@@ -46,13 +94,22 @@ async function parseRSSFeed(url: string, sourceName: string): Promise<RSSItem[]>
       
       // Extract pubDate
       const dateMatch = itemContent.match(/<pubDate[^>]*>([\s\S]*?)<\/pubDate>/i);
-      const pubDate = dateMatch ? dateMatch[1].trim() : new Date().toISOString();
-      
+      const parsedDate = normalizePubDate(dateMatch ? dateMatch[1] : null);
+
+      if (!parsedDate) {
+        console.warn(`Skipping item with invalid date from ${sourceName}: ${title}`);
+        continue;
+      }
+
+      if (parsedDate.getTime() < twentyFourHoursAgo) {
+        continue;
+      }
+
       if (title && link) {
         items.push({
           title: title.replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>'),
           link: link,
-          pubDate: pubDate,
+          pubDate: parsedDate.toISOString(),
           source: sourceName,
         });
       }
