@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Link } from "react-router-dom";
-import { ArrowRight, Plus, Trash2 } from "lucide-react";
+import { ArrowRight, Check, Pencil, Plus, Trash2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -26,6 +26,8 @@ const Admin = () => {
   const [sources, setSources] = useState<RSSSource[]>([]);
   const [loading, setLoading] = useState(true);
   const [newSource, setNewSource] = useState({ name: "", url: "" });
+  const [editingSourceId, setEditingSourceId] = useState<string | null>(null);
+  const [editingValues, setEditingValues] = useState({ name: "", url: "" });
   const { toast } = useToast();
 
   const fetchSources = async () => {
@@ -68,7 +70,7 @@ const Admin = () => {
     try {
       const { error } = await supabase
         .from('rss_sources')
-        .insert([{ name: newSource.name, url: newSource.url }]);
+        .insert([{ name: newSource.name.trim(), url: newSource.url.trim() }]);
       
       if (error) throw error;
       
@@ -134,6 +136,59 @@ const Admin = () => {
       toast({
         title: "שגיאה",
         description: "לא הצלחנו למחוק את המקור",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const beginEditing = (source: RSSSource) => {
+    setEditingSourceId(source.id);
+    setEditingValues({ name: source.name, url: source.url });
+  };
+
+  const cancelEditing = () => {
+    setEditingSourceId(null);
+    setEditingValues({ name: "", url: "" });
+  };
+
+  const handleUpdateSource = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingSourceId) {
+      return;
+    }
+
+    const trimmedName = editingValues.name.trim();
+    const trimmedUrl = editingValues.url.trim();
+
+    if (!trimmedName || !trimmedUrl) {
+      toast({
+        title: "שגיאה",
+        description: "יש למלא את כל השדות",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    try {
+      const { error } = await supabase
+        .from('rss_sources')
+        .update({ name: trimmedName, url: trimmedUrl })
+        .eq('id', editingSourceId);
+
+      if (error) throw error;
+
+      toast({
+        title: "עודכן",
+        description: "המקור עודכן בהצלחה",
+      });
+
+      cancelEditing();
+      fetchSources();
+    } catch (error) {
+      console.error('Error updating source:', error);
+      toast({
+        title: "שגיאה",
+        description: "לא הצלחנו לעדכן את המקור",
         variant: "destructive",
       });
     }
@@ -205,37 +260,97 @@ const Admin = () => {
               <p className="text-center text-muted-foreground py-8">אין מקורות במערכת</p>
             ) : (
               <div className="space-y-4">
-                {sources.map((source) => (
-                  <div
-                    key={source.id}
-                    className="flex items-center justify-between p-4 border border-border rounded-lg hover:bg-accent/50 transition-colors"
-                  >
-                    <div className="flex-1 space-y-1">
-                      <h3 className="font-semibold">{source.name}</h3>
-                      <p className="text-sm text-muted-foreground break-all">{source.url}</p>
-                    </div>
-                    <div className="flex items-center gap-3 mr-4">
-                      <div className="flex items-center gap-2">
-                        <Label htmlFor={`active-${source.id}`} className="text-sm">
-                          {source.active ? 'פעיל' : 'מושבת'}
-                        </Label>
-                        <Switch
-                          id={`active-${source.id}`}
-                          checked={source.active}
-                          onCheckedChange={() => handleToggleActive(source.id, source.active)}
-                        />
-                      </div>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={() => handleDeleteSource(source.id)}
-                        className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                {sources.map((source) => {
+                  const isEditing = editingSourceId === source.id;
+
+                  return (
+                    <div
+                      key={source.id}
+                      className="p-4 border border-border rounded-lg hover:bg-accent/50 transition-colors"
+                    >
+                      <form
+                        onSubmit={handleUpdateSource}
+                        className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between"
                       >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
+                        <div className="flex-1 space-y-2">
+                          {isEditing ? (
+                            <>
+                              <div className="space-y-1">
+                                <Label htmlFor={`name-${source.id}`}>שם המקור</Label>
+                                <Input
+                                  id={`name-${source.id}`}
+                                  value={editingValues.name}
+                                  onChange={(event) =>
+                                    setEditingValues((prev) => ({ ...prev, name: event.target.value }))
+                                  }
+                                />
+                              </div>
+                              <div className="space-y-1">
+                                <Label htmlFor={`url-${source.id}`}>כתובת RSS</Label>
+                                <Input
+                                  id={`url-${source.id}`}
+                                  type="url"
+                                  value={editingValues.url}
+                                  onChange={(event) =>
+                                    setEditingValues((prev) => ({ ...prev, url: event.target.value }))
+                                  }
+                                />
+                              </div>
+                            </>
+                          ) : (
+                            <>
+                              <h3 className="font-semibold">{source.name}</h3>
+                              <p className="text-sm text-muted-foreground break-all">{source.url}</p>
+                            </>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-3 md:ml-4">
+                          <div className="flex items-center gap-2">
+                            <Label htmlFor={`active-${source.id}`} className="text-sm">
+                              {source.active ? 'פעיל' : 'מושבת'}
+                            </Label>
+                            <Switch
+                              id={`active-${source.id}`}
+                              checked={source.active}
+                              onCheckedChange={() => handleToggleActive(source.id, source.active)}
+                              disabled={isEditing}
+                            />
+                          </div>
+                          {isEditing ? (
+                            <div className="flex items-center gap-2">
+                              <Button type="submit" size="icon" variant="default">
+                                <Check className="h-4 w-4" />
+                              </Button>
+                              <Button type="button" size="icon" variant="ghost" onClick={cancelEditing}>
+                                <X className="h-4 w-4" />
+                              </Button>
+                            </div>
+                          ) : (
+                            <div className="flex items-center gap-2">
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                onClick={() => beginEditing(source)}
+                                className="hover:bg-primary/10"
+                              >
+                                <Pencil className="h-4 w-4" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                onClick={() => handleDeleteSource(source.id)}
+                                className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            </div>
+                          )}
+                        </div>
+                      </form>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </CardContent>

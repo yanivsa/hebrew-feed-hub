@@ -1,9 +1,10 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Link } from "react-router-dom";
 import { RefreshCw, Settings } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
+import { APP_VERSION } from "@/config/version";
 
 interface NewsItem {
   title: string;
@@ -22,11 +23,26 @@ const Index = () => {
     try {
       setLoading(true);
       const { data, error } = await supabase.functions.invoke('fetch-rss');
-      
+
       if (error) throw error;
-      
+
       if (data?.items) {
-        setNews(data.items);
+        const twentyFourHoursAgo = Date.now() - 24 * 60 * 60 * 1000;
+
+        const sanitizedItems = (data.items as NewsItem[])
+          .map((item) => {
+            const parsedDate = Date.parse(item.pubDate);
+            return {
+              ...item,
+              parsedDate,
+            };
+          })
+          .filter((item) => !Number.isNaN(item.parsedDate))
+          .filter((item) => item.parsedDate >= twentyFourHoursAgo)
+          .sort((a, b) => b.parsedDate - a.parsedDate)
+          .map(({ parsedDate, ...rest }) => rest);
+
+        setNews(sanitizedItems);
         setLastUpdate(new Date());
       }
     } catch (error) {
@@ -52,17 +68,29 @@ const Index = () => {
     return () => clearInterval(interval);
   }, []);
 
+  const timeFormatter = useMemo(
+    () =>
+      new Intl.DateTimeFormat('he-IL', {
+        timeZone: 'Asia/Jerusalem',
+        hour: '2-digit',
+        minute: '2-digit',
+        day: '2-digit',
+        month: '2-digit',
+      }),
+    []
+  );
+
   const formatTime = (dateStr: string) => {
-    try {
-      const date = new Date(dateStr);
-      const hours = date.getHours().toString().padStart(2, '0');
-      const minutes = date.getMinutes().toString().padStart(2, '0');
-      const day = date.getDate().toString().padStart(2, '0');
-      const month = (date.getMonth() + 1).toString().padStart(2, '0');
-      return `${hours}:${minutes} ${day}/${month}`;
-    } catch {
+    if (!dateStr) {
+      return '—';
+    }
+
+    const parsed = Date.parse(dateStr);
+    if (Number.isNaN(parsed)) {
       return dateStr;
     }
+
+    return timeFormatter.format(new Date(parsed));
   };
 
   return (
@@ -71,11 +99,14 @@ const Index = () => {
       <header className="bg-primary text-primary-foreground py-4 px-6 shadow-md">
         <div className="max-w-7xl mx-auto flex items-center justify-between">
           <div className="flex items-center gap-4">
-            <h1 className="text-3xl font-bold">מרכז החדשות של ישראל</h1>
+            <div>
+              <h1 className="text-3xl font-bold">מרכז החדשות של ישראל</h1>
+              <p className="text-xs font-medium opacity-80">גרסה: {APP_VERSION}</p>
+            </div>
           </div>
           <div className="flex items-center gap-2">
             <span className="text-sm opacity-90">
-              עדכון אחרון: {lastUpdate.toLocaleTimeString('he-IL')}
+              עדכון אחרון: {lastUpdate.toLocaleTimeString('he-IL', { timeZone: 'Asia/Jerusalem' })}
             </span>
             <Button
               variant="ghost"

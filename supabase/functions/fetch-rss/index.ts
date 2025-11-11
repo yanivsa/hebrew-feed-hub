@@ -12,10 +12,98 @@ interface RSSItem {
   source: string;
 }
 
-async function parseRSSFeed(url: string, sourceName: string): Promise<RSSItem[]> {
+function decodeHtmlEntities(value: string): string {
+  return value
+    .replace(/<!\[CDATA\[(.*?)\]\]>/g, '$1')
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .trim();
+}
+
+function extractFirstTagContent(itemContent: string, tags: string[]): string | null {
+  for (const tag of tags) {
+    const regex = new RegExp(`<${tag}[^>]*>([\\s\\S]*?)<\\/${tag}>`, 'i');
+    const match = itemContent.match(regex);
+    if (match && match[1]) {
+      return decodeHtmlEntities(match[1]);
+    }
+  }
+  return null;
+}
+
+function extractLink(itemContent: string): string | null {
+  const tagContent = extractFirstTagContent(itemContent, ['link']);
+  if (tagContent) {
+    return tagContent;
+  }
+
+  const linkAttrMatch = itemContent.match(/<link[^>]*href=["']([^"']+)["'][^>]*>/i);
+  if (linkAttrMatch && linkAttrMatch[1]) {
+    return decodeHtmlEntities(linkAttrMatch[1]);
+  }
+
+  const guidFallback = extractFirstTagContent(itemContent, ['guid']);
+  if (guidFallback && /^https?:\/\//i.test(guidFallback)) {
+    return guidFallback;
+  }
+
+  return null;
+}
+
+function normalizePubDate(rawDate: string | null): Date | null {
+  if (!rawDate) {
+    return null;
+  }
+
+  const trimmedDate = rawDate.trim();
+  if (!trimmedDate) {
+    return null;
+  }
+
+  const directParse = Date.parse(trimmedDate);
+  if (!Number.isNaN(directParse)) {
+    return new Date(directParse);
+  }
+
+  // Some feeds omit the timezone suffix (e.g. `2024-06-15T10:30:00`). Try to
+  // parse them as UTC by appending a "Z" designator.
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/.test(trimmedDate)) {
+    const utcParse = Date.parse(`${trimmedDate}Z`);
+    if (!Number.isNaN(utcParse)) {
+      return new Date(utcParse);
+    }
+  }
+
+  console.warn(`Unable to parse publication date: ${trimmedDate}`);
+  return null;
+}
+
+function validateSourceUrl(url: string, sourceName: string): URL | null {
   try {
-    console.log(`Fetching RSS from: ${url}`);
-    const response = await fetch(url, {
+    const parsedUrl = new URL(url);
+    if (parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:') {
+      console.warn(`Skipping ${sourceName}: unsupported protocol ${parsedUrl.protocol}`);
+      return null;
+    }
+    return parsedUrl;
+  } catch (error) {
+    console.warn(`Skipping ${sourceName}: invalid URL`, error);
+    return null;
+  }
+}
+
+async function parseRSSFeed(url: string, sourceName: string): Promise<RSSItem[]> {
+  const normalizedUrl = validateSourceUrl(url, sourceName);
+  if (!normalizedUrl) {
+    return [];
+  }
+
+  try {
+    console.log(`Fetching RSS from: ${normalizedUrl.toString()}`);
+    const response = await fetch(normalizedUrl, {
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
       },
@@ -31,28 +119,35 @@ async function parseRSSFeed(url: string, sourceName: string): Promise<RSSItem[]>
     // Parse XML manually (basic parsing)
     const items: RSSItem[] = [];
     const itemRegex = /<item[^>]*>([\s\S]*?)<\/item>/gi;
-    const matches = text.matchAll(itemRegex);
-    
+    const entryRegex = /<entry[^>]*>([\s\S]*?)<\/entry>/gi;
+    const matches = [...text.matchAll(itemRegex), ...text.matchAll(entryRegex)];
+    const twentyFourHoursAgo = Date.now() - 24 * 60 * 60 * 1000;
+
     for (const match of matches) {
       const itemContent = match[1];
-      
-      // Extract title
-      const titleMatch = itemContent.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
-      const title = titleMatch ? titleMatch[1].replace(/<!\[CDATA\[(.*?)\]\]>/g, '$1').trim() : '';
-      
-      // Extract link
-      const linkMatch = itemContent.match(/<link[^>]*>([\s\S]*?)<\/link>/i);
-      const link = linkMatch ? linkMatch[1].replace(/<!\[CDATA\[(.*?)\]\]>/g, '$1').trim() : '';
-      
-      // Extract pubDate
-      const dateMatch = itemContent.match(/<pubDate[^>]*>([\s\S]*?)<\/pubDate>/i);
-      const pubDate = dateMatch ? dateMatch[1].trim() : new Date().toISOString();
-      
+
+      const title = extractFirstTagContent(itemContent, ['title']) || '';
+
+      const link = extractLink(itemContent) || '';
+
+      const rawDate =
+        extractFirstTagContent(itemContent, ['pubDate', 'dc:date', 'updated', 'published']);
+      const parsedDate = normalizePubDate(rawDate);
+
+      if (!parsedDate) {
+        console.warn(`Skipping item with invalid date from ${sourceName}: ${title}`);
+        continue;
+      }
+
+      if (parsedDate.getTime() < twentyFourHoursAgo) {
+        continue;
+      }
+
       if (title && link) {
         items.push({
-          title: title.replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>'),
-          link: link,
-          pubDate: pubDate,
+          title,
+          link,
+          pubDate: parsedDate.toISOString(),
           source: sourceName,
         });
       }
