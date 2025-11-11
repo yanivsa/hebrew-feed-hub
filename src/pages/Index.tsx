@@ -22,11 +22,26 @@ const Index = () => {
     try {
       setLoading(true);
       const { data, error } = await supabase.functions.invoke('fetch-rss');
-      
+
       if (error) throw error;
-      
+
       if (data?.items) {
-        setNews(data.items);
+        const twentyFourHoursAgo = Date.now() - 24 * 60 * 60 * 1000;
+
+        const sanitizedItems = (data.items as NewsItem[])
+          .map((item) => {
+            const parsedDate = Date.parse(item.pubDate);
+            return {
+              ...item,
+              parsedDate,
+            };
+          })
+          .filter((item) => !Number.isNaN(item.parsedDate))
+          .filter((item) => item.parsedDate >= twentyFourHoursAgo)
+          .sort((a, b) => b.parsedDate - a.parsedDate)
+          .map(({ parsedDate, ...rest }) => rest);
+
+        setNews(sanitizedItems);
         setLastUpdate(new Date());
       }
     } catch (error) {
