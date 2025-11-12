@@ -1,0 +1,4 @@
+-- Deprecated placeholder: security policies were moved to a later migration
+-- (20251111050000_secure_rss_sources.sql) so that the rss_sources table exists
+-- before we reference it. This file intentionally left blank to avoid failing
+-- fresh environments when running migrations in lexical order.
