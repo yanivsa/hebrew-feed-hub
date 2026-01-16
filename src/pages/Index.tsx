@@ -1,24 +1,59 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { supabase } from "@/integrations/supabase/client";
 import { Link } from "react-router-dom";
 import { RefreshCw, Settings } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { APP_VERSION_LABEL, APP_RELEASE_LABEL } from "@/version";
-
-interface NewsItem {
-  title: string;
-  link: string;
-  pubDate: string;
-  source: string;
-  timestamp: number;
-  timestampUtc?: number;
-  displayTime?: string;
-  sourceTimeZone?: string;
-  parseStrategy?: "explicit" | "inferred";
-}
+import { fetchLatestNews } from "@/lib/rss-client";
+import type { NewsItem } from "@/types/news";
 
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+const NEWS_CACHE_KEY = "hebrew-feed-cache:v1";
+
+interface CachedNewsPayload {
+  timestamp: number;
+  items: NewsItem[];
+}
+
+const readCachedNews = (): CachedNewsPayload | null => {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  try {
+    const payload = window.localStorage.getItem(NEWS_CACHE_KEY);
+    if (!payload) {
+      return null;
+    }
+
+    const parsed = JSON.parse(payload) as CachedNewsPayload;
+    if (!Array.isArray(parsed.items) || typeof parsed.timestamp !== "number") {
+      return null;
+    }
+
+    return parsed;
+  } catch (error) {
+    console.warn("Failed to parse cached news payload", error);
+    return null;
+  }
+};
+
+const persistNewsCache = (items: NewsItem[]) => {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  const payload: CachedNewsPayload = {
+    timestamp: Date.now(),
+    items,
+  };
+
+  try {
+    window.localStorage.setItem(NEWS_CACHE_KEY, JSON.stringify(payload));
+  } catch (error) {
+    console.warn("Failed to persist news cache", error);
+  }
+};
 
 const parsePubDateMs = (value: string | undefined) => {
   if (!value) {
@@ -41,12 +76,22 @@ const getCanonicalTimestamp = (item: Pick<NewsItem, "timestamp" | "timestampUtc"
 };
 
 const resolveTimestamp = (item: Pick<NewsItem, "pubDate" | "timestamp" | "timestampUtc">) => {
+  // Prioritize server-provided UTC timestamp as it's parsed with robust libraries (Luxon)
+  if (typeof item.timestampUtc === "number" && Number.isFinite(item.timestampUtc)) {
+    return item.timestampUtc;
+  }
+
+  // Fallback to generic server timestamp
+  if (typeof item.timestamp === "number" && Number.isFinite(item.timestamp)) {
+    return item.timestamp;
+  }
+
   const pubDateTimestamp = parsePubDateMs(item.pubDate);
   if (Number.isFinite(pubDateTimestamp)) {
     return pubDateTimestamp;
   }
 
-  return getCanonicalTimestamp(item);
+  return Number.NaN;
 };
 
 const prepareNewsItems = (items: NewsItem[]) => {
@@ -117,39 +162,63 @@ const extractTimeFromPubDate = (pubDate: string | undefined): string => {
   }
 
   // Try to extract time and date directly from pubDate string
-  // Format: "Wed, 12 Nov 2025 21:19:00 GMT"
-  const timeMatch = pubDate.match(/(\d{1,2}):(\d{2}):(\d{2})/);
-  const dateMatch = pubDate.match(/(\d{1,2})\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+(\d{4})/i);
+  // Supports formats like:
+  // - "Thu, 13 Nov 2025 21:51:00 GMT"
+  // - "Wed, 12 Nov 2025 21:19:00 GMT"
+  // - "13 Nov 2025 21:51:00 GMT"
+  // - ISO format: "2025-11-13T21:51:00Z"
+  // - ISO format with timezone: "2025-11-13T21:51:00+00:00"
   
-  if (timeMatch && dateMatch) {
-    const hours = timeMatch[1].padStart(2, "0");
-    const minutes = timeMatch[2];
-    const day = dateMatch[1].padStart(2, "0");
+  // Try RFC 2822 / HTTP format first
+  const rfc2822Match = pubDate.match(/(\d{1,2})\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+(\d{4})\s+(\d{1,2}):(\d{2}):(\d{2})/i);
+  if (rfc2822Match) {
+    const day = rfc2822Match[1].padStart(2, "0");
+    const monthName = rfc2822Match[2];
+    const hours = rfc2822Match[4].padStart(2, "0");
+    const minutes = rfc2822Match[5];
     
     const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-    const monthIndex = monthNames.findIndex(m => m.toLowerCase() === dateMatch[2].toLowerCase());
+    const monthIndex = monthNames.findIndex(m => m.toLowerCase() === monthName.toLowerCase());
     const month = monthIndex >= 0 ? (monthIndex + 1).toString().padStart(2, "0") : "";
     
     if (month) {
       return `${hours}:${minutes} ${day}/${month}`;
     }
   }
+  
+  // Try ISO format: "2025-11-13T21:51:00Z" or "2025-11-13T21:51:00+00:00"
+  const isoMatch = pubDate.match(/(\d{4})-(\d{2})-(\d{2})[T\s]+(\d{1,2}):(\d{2}):(\d{2})/);
+  if (isoMatch) {
+    const month = isoMatch[2];
+    const day = isoMatch[3];
+    const hours = isoMatch[4].padStart(2, "0");
+    const minutes = isoMatch[5];
+    
+    return `${hours}:${minutes} ${day}/${month}`;
+  }
 
   return "";
 };
 
 const normalizedDisplayTime = (item: Pick<NewsItem, "timestamp" | "timestampUtc" | "displayTime" | "pubDate">) => {
+  // 1. Use displayTime from server if available (it handles extraction logic)
   const trimmedServerValue = (item.displayTime ?? "").trim();
   if (trimmedServerValue.length > 0) {
     return trimmedServerValue;
   }
 
-  // Try to extract time directly from pubDate first
+  // 2. Format the resolved timestamp
+  if (Number.isFinite(item.timestamp)) {
+    return formatTime(item.timestamp);
+  }
+
+  // 3. Fallback to extracting time directly from pubDate
   const extractedTime = extractTimeFromPubDate(item.pubDate);
   if (extractedTime) {
     return extractedTime;
   }
 
+  // 4. Fallback to parsing timestamp (with timezone conversion) if not done in step 2
   const pubDateTimestamp = parsePubDateMs(item.pubDate);
   if (Number.isFinite(pubDateTimestamp)) {
     return formatTime(pubDateTimestamp);
@@ -180,9 +249,12 @@ const buildPubDateTitle = (item: Pick<NewsItem, "pubDate" | "sourceTimeZone" | "
 };
 
 const Index = () => {
-  const [news, setNews] = useState<NewsItem[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [lastUpdate, setLastUpdate] = useState<Date>(new Date());
+  const cachedSnapshot = useMemo(readCachedNews, []);
+  const [news, setNews] = useState<NewsItem[]>(() => cachedSnapshot?.items ?? []);
+  const [loading, setLoading] = useState(() => !cachedSnapshot);
+  const [lastUpdate, setLastUpdate] = useState<Date>(() =>
+    cachedSnapshot?.timestamp ? new Date(cachedSnapshot.timestamp) : new Date(),
+  );
   const lastUpdateDisplay = useMemo(() => {
     const hours = lastUpdate.getHours().toString().padStart(2, '0');
     const minutes = lastUpdate.getMinutes().toString().padStart(2, '0');
@@ -195,14 +267,13 @@ const Index = () => {
   const fetchNews = useCallback(async () => {
     try {
       setLoading(true);
-      const { data, error } = await supabase.functions.invoke('fetch-rss');
-
-      if (error) throw error;
+      const data = await fetchLatestNews();
 
       if (data?.items) {
         const sanitizedItems = prepareNewsItems(data.items as NewsItem[]);
         setNews(sanitizedItems);
         setLastUpdate(new Date());
+        persistNewsCache(sanitizedItems);
       }
     } catch (error) {
       console.error('Error fetching news:', error);
@@ -230,19 +301,25 @@ const Index = () => {
   return (
     <div className="min-h-screen bg-background">
       {/* Header */}
-      <header className="bg-primary text-primary-foreground py-4 px-6 shadow-md">
-        <div className="max-w-7xl mx-auto flex items-center justify-between">
+      <header data-critical-hero className="bg-primary text-primary-foreground py-4 px-6 shadow-md">
+        <div
+          data-critical-hero-inner
+          className="max-w-7xl mx-auto flex items-center justify-between gap-4 flex-wrap"
+        >
           <div className="flex items-center gap-4">
             <div className="flex flex-col">
               <h1 className="text-3xl font-bold leading-tight">מרכז החדשות של ישראל</h1>
               <span className="text-xs text-primary-foreground/90">{APP_RELEASE_LABEL}</span>
             </div>
-            <span className="inline-flex items-center rounded-full bg-primary-foreground/20 px-3 py-1 text-xs font-semibold text-primary-foreground">
+            <span
+              data-critical-pill
+              className="inline-flex items-center rounded-full bg-primary-foreground/20 px-3 py-1 text-xs font-semibold text-primary-foreground"
+            >
               {APP_VERSION_LABEL}
             </span>
           </div>
           <div className="flex items-center gap-2">
-            <span className="text-sm opacity-90">
+            <span data-critical-meta className="text-sm opacity-90">
               עדכון אחרון: {lastUpdateDisplay}
             </span>
             <Button
