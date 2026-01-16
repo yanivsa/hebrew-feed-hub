@@ -101,6 +101,8 @@ const applyTimezoneFix = (timestamp: number, source: string) => {
     return timestamp;
   }
 
+  console.log(`Applying timezone fix for ${source} (Original: ${new Date(timestamp).toISOString()})`);
+
   // These sources report "Israel Wall Time" as UTC.
   // We need to shift the timestamp back by the Israel UTC offset (GMT+2 or GMT+3).
   // We use the timestamp itself to determine the likely offset (Summer/Winter).
@@ -126,7 +128,8 @@ const applyTimezoneFix = (timestamp: number, source: string) => {
     return timestamp - (offsetHours * 60 * 60 * 1000);
   } catch (e) {
     console.warn("Failed to apply timezone fix", e);
-    return timestamp;
+    // Fallback to Winter time offset (2 hours) if something fails
+    return timestamp - (2 * 60 * 60 * 1000);
   }
 };
 
