@@ -8,7 +8,7 @@ import { fetchLatestNews } from "@/lib/rss-client";
 import type { NewsItem } from "@/types/news";
 
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
-const NEWS_CACHE_KEY = "hebrew-feed-cache:v1";
+const NEWS_CACHE_KEY = "hebrew-feed-cache:v2-timezone-fix";
 const PROBLEMATIC_UTC_SOURCES = ["ישראל היום", "וואלה"];
 
 interface CachedNewsPayload {
@@ -96,7 +96,8 @@ const resolveTimestamp = (item: Pick<NewsItem, "pubDate" | "timestamp" | "timest
 };
 
 const applyTimezoneFix = (timestamp: number, source: string) => {
-  if (!PROBLEMATIC_UTC_SOURCES.includes(source)) {
+  const normalizedSource = source?.trim() || "";
+  if (!PROBLEMATIC_UTC_SOURCES.some(s => normalizedSource.includes(s))) {
     return timestamp;
   }
 
