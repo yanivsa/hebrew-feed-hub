@@ -9,6 +9,7 @@ import type { NewsItem } from "@/types/news";
 
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 const NEWS_CACHE_KEY = "hebrew-feed-cache:v1";
+const PROBLEMATIC_UTC_SOURCES = ["ישראל היום", "וואלה"];
 
 interface CachedNewsPayload {
   timestamp: number;
@@ -94,12 +95,47 @@ const resolveTimestamp = (item: Pick<NewsItem, "pubDate" | "timestamp" | "timest
   return Number.NaN;
 };
 
+const applyTimezoneFix = (timestamp: number, source: string) => {
+  if (!PROBLEMATIC_UTC_SOURCES.includes(source)) {
+    return timestamp;
+  }
+
+  // These sources report "Israel Wall Time" as UTC.
+  // We need to shift the timestamp back by the Israel UTC offset (GMT+2 or GMT+3).
+  // We use the timestamp itself to determine the likely offset (Summer/Winter).
+  // While getting the offset at "timestamp treated as UTC" technically gives us the offset
+  // for "timestamp + 2/3 hours", the DST switch happens at 2am, so this proxy is safe
+  // for all hours except the exact switch window, which is acceptable.
+
+  try {
+    const formatter = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'Asia/Jerusalem',
+      timeZoneName: 'shortOffset'
+    });
+
+    // Check what the offset is for this time
+    const parts = formatter.formatToParts(new Date(timestamp));
+    const offsetPart = parts.find(p => p.type === 'timeZoneName');
+
+    // Check if offset is +3 (Summer) or +2 (Winter)
+    // The format is usually "GMT+3" or "GMT+2"
+    const isSummer = offsetPart?.value?.includes('+3');
+    const offsetHours = isSummer ? 3 : 2;
+
+    return timestamp - (offsetHours * 60 * 60 * 1000);
+  } catch (e) {
+    console.warn("Failed to apply timezone fix", e);
+    return timestamp;
+  }
+};
+
 const prepareNewsItems = (items: NewsItem[]) => {
   const oneDayAgo = Date.now() - ONE_DAY_MS;
 
   const normalized = items
     .map((item) => {
-      const timestamp = resolveTimestamp(item);
+      const rawTimestamp = resolveTimestamp(item);
+      const timestamp = applyTimezoneFix(rawTimestamp, item.source);
 
       return {
         ...item,
@@ -168,7 +204,7 @@ const extractTimeFromPubDate = (pubDate: string | undefined): string => {
   // - "13 Nov 2025 21:51:00 GMT"
   // - ISO format: "2025-11-13T21:51:00Z"
   // - ISO format with timezone: "2025-11-13T21:51:00+00:00"
-  
+
   // Try RFC 2822 / HTTP format first
   const rfc2822Match = pubDate.match(/(\d{1,2})\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+(\d{4})\s+(\d{1,2}):(\d{2}):(\d{2})/i);
   if (rfc2822Match) {
@@ -176,16 +212,16 @@ const extractTimeFromPubDate = (pubDate: string | undefined): string => {
     const monthName = rfc2822Match[2];
     const hours = rfc2822Match[4].padStart(2, "0");
     const minutes = rfc2822Match[5];
-    
+
     const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
     const monthIndex = monthNames.findIndex(m => m.toLowerCase() === monthName.toLowerCase());
     const month = monthIndex >= 0 ? (monthIndex + 1).toString().padStart(2, "0") : "";
-    
+
     if (month) {
       return `${hours}:${minutes} ${day}/${month}`;
     }
   }
-  
+
   // Try ISO format: "2025-11-13T21:51:00Z" or "2025-11-13T21:51:00+00:00"
   const isoMatch = pubDate.match(/(\d{4})-(\d{2})-(\d{2})[T\s]+(\d{1,2}):(\d{2}):(\d{2})/);
   if (isoMatch) {
@@ -193,7 +229,7 @@ const extractTimeFromPubDate = (pubDate: string | undefined): string => {
     const day = isoMatch[3];
     const hours = isoMatch[4].padStart(2, "0");
     const minutes = isoMatch[5];
-    
+
     return `${hours}:${minutes} ${day}/${month}`;
   }
 
@@ -289,7 +325,7 @@ const Index = () => {
 
   useEffect(() => {
     fetchNews();
-    
+
     // Auto-refresh every minute
     const interval = setInterval(() => {
       fetchNews();
