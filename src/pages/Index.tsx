@@ -235,10 +235,9 @@ const extractTimeFromPubDate = (pubDate: string | undefined): string => {
   return "";
 };
 
-const normalizedDisplayTime = (item: Pick<NewsItem, "timestamp" | "timestampUtc" | "displayTime" | "pubDate">) => {
+const normalizedDisplayTime = (item: Pick<NewsItem, "timestamp" | "timestampUtc" | "displayTime" | "pubDate"> & { source?: string }) => {
   // 1. Use displayTime from server if available (it handles extraction logic)
-  // BUT skip this for problematic sources where we want to force our own formatting
-  const source = (item as any).source || "";
+  const source = item.source || "";
   const isProblematic = PROBLEMATIC_UTC_SOURCES.some(s => source.includes(s));
 
   const trimmedServerValue = (item.displayTime ?? "").trim();

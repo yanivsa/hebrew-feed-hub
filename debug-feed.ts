@@ -16,11 +16,20 @@ const applyTimezoneFix = (timestamp: number, source: string) => {
 
   // Simplified version of the fix for the debug script (Israel is currently UTC+2)
   // In the real app, we use Intl.DateTimeFormat to detect 2 vs 3 hours.
-  const offsetHours = 2; 
+  const offsetHours = 2;
   return timestamp - (offsetHours * 60 * 60 * 1000);
 };
 
-const resolveTimestamp = (item: any) => {
+interface DebugItem {
+  timestampUtc?: number;
+  timestamp?: number;
+  pubDate: string;
+  source: string;
+  title: string;
+  [key: string]: unknown;
+}
+
+const resolveTimestamp = (item: DebugItem) => {
   if (typeof item.timestampUtc === "number" && Number.isFinite(item.timestampUtc)) {
     return item.timestampUtc;
   }
@@ -30,7 +39,7 @@ const resolveTimestamp = (item: any) => {
   return Date.parse(item.pubDate);
 };
 
-const prepareNewsItems = (items: any[]) => {
+const prepareNewsItems = (items: DebugItem[]) => {
   const normalized = items
     .map((item) => {
       const rawTimestamp = resolveTimestamp(item);
@@ -39,7 +48,7 @@ const prepareNewsItems = (items: any[]) => {
     })
     .filter((item) => Number.isFinite(item.timestamp));
 
-  normalized.sort((a, b) => b.timestamp - a.timestamp);
+  normalized.sort((a, b) => b.timestamp - a.timestamp!);
   return normalized;
 };
 
@@ -61,8 +70,8 @@ async function debug() {
 
     console.log("TOP 20 ITEMS AFTER FIX:");
     sortedItems.slice(0, 20).forEach((item, index) => {
-        const time = new Date(item.timestamp).toLocaleTimeString('he-IL', { timeZone: 'Asia/Jerusalem' });
-        console.log(`${index + 1}. [${time}] ${item.source.padEnd(12)} | ${item.title}`);
+      const time = new Date(item.timestamp).toLocaleTimeString('he-IL', { timeZone: 'Asia/Jerusalem' });
+      console.log(`${index + 1}. [${time}] ${item.source.padEnd(12)} | ${item.title}`);
     });
 
     const israelHayomIdx = sortedItems.findIndex(i => i.source.includes("ישראל היום") && i.title.includes("ברקוביץ"));
@@ -73,9 +82,9 @@ async function debug() {
     console.log(`Israel Hayom (18:05) Index: ${israelHayomIdx}`);
 
     if (channel7Idx < israelHayomIdx) {
-        console.log("SUCCESS: Channel 7 is ABOVE Israel Hayom.");
+      console.log("SUCCESS: Channel 7 is ABOVE Israel Hayom.");
     } else {
-        console.log("FAILURE: Israel Hayom is still above Channel 7.");
+      console.log("FAILURE: Israel Hayom is still above Channel 7.");
     }
 
   } catch (e) {
