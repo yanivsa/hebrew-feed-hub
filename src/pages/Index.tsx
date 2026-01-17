@@ -8,7 +8,7 @@ import { fetchLatestNews } from "@/lib/rss-client";
 import type { NewsItem } from "@/types/news";
 
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
-const NEWS_CACHE_KEY = "hebrew-feed-cache:v2-timezone-fix";
+const NEWS_CACHE_KEY = "hebrew-feed-cache:v4-timezone-fix-restored";
 const PROBLEMATIC_UTC_SOURCES = ["ישראל היום", "וואלה"];
 
 interface CachedNewsPayload {
@@ -99,22 +99,13 @@ const applyTimezoneFix = (timestamp: number, source: string) => {
   if (!source) return timestamp;
 
   const normalizedSource = source.trim();
-  // Log sources seen to debug exact strings in production
-  console.log(`Processing source: "${normalizedSource}"`);
 
   if (!PROBLEMATIC_UTC_SOURCES.some(s => normalizedSource.includes(s))) {
     return timestamp;
   }
 
-  console.log(`Applying timezone fix for ${source} (Original: ${new Date(timestamp).toISOString()})`);
-
   // These sources report "Israel Wall Time" as UTC.
   // We need to shift the timestamp back by the Israel UTC offset (GMT+2 or GMT+3).
-  // We use the timestamp itself to determine the likely offset (Summer/Winter).
-  // While getting the offset at "timestamp treated as UTC" technically gives us the offset
-  // for "timestamp + 2/3 hours", the DST switch happens at 2am, so this proxy is safe
-  // for all hours except the exact switch window, which is acceptable.
-
   try {
     const formatter = new Intl.DateTimeFormat('en-US', {
       timeZone: 'Asia/Jerusalem',
@@ -126,14 +117,13 @@ const applyTimezoneFix = (timestamp: number, source: string) => {
     const offsetPart = parts.find(p => p.type === 'timeZoneName');
 
     // Check if offset is +3 (Summer) or +2 (Winter)
-    // The format is usually "GMT+3" or "GMT+2"
     const isSummer = offsetPart?.value?.includes('+3');
     const offsetHours = isSummer ? 3 : 2;
 
     return timestamp - (offsetHours * 60 * 60 * 1000);
   } catch (e) {
     console.warn("Failed to apply timezone fix", e);
-    // Fallback to Winter time offset (2 hours) if something fails
+    // Fallback to Winter time offset (2 hours)
     return timestamp - (2 * 60 * 60 * 1000);
   }
 };
