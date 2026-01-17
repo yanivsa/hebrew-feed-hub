@@ -8,8 +8,7 @@ import { fetchLatestNews } from "@/lib/rss-client";
 import type { NewsItem } from "@/types/news";
 
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
-const NEWS_CACHE_KEY = "hebrew-feed-cache:v4-timezone-fix-restored";
-const PROBLEMATIC_UTC_SOURCES = ["ישראל היום", "וואלה"];
+const NEWS_CACHE_KEY = "hebrew-feed-cache:v5-backend-timezone-fix";
 
 interface CachedNewsPayload {
   timestamp: number;
@@ -95,47 +94,12 @@ const resolveTimestamp = (item: Pick<NewsItem, "pubDate" | "timestamp" | "timest
   return Number.NaN;
 };
 
-const applyTimezoneFix = (timestamp: number, source: string) => {
-  if (!source) return timestamp;
-
-  const normalizedSource = source.trim();
-
-  if (!PROBLEMATIC_UTC_SOURCES.some(s => normalizedSource.includes(s))) {
-    return timestamp;
-  }
-
-  // These sources report "Israel Wall Time" as UTC.
-  // We need to shift the timestamp back by the Israel UTC offset (GMT+2 or GMT+3).
-  try {
-    const formatter = new Intl.DateTimeFormat('en-US', {
-      timeZone: 'Asia/Jerusalem',
-      timeZoneName: 'shortOffset'
-    });
-
-    // Check what the offset is for this time
-    const parts = formatter.formatToParts(new Date(timestamp));
-    const offsetPart = parts.find(p => p.type === 'timeZoneName');
-
-    // Check if offset is +3 (Summer) or +2 (Winter)
-    const isSummer = offsetPart?.value?.includes('+3');
-    const offsetHours = isSummer ? 3 : 2;
-
-    return timestamp - (offsetHours * 60 * 60 * 1000);
-  } catch (e) {
-    console.warn("Failed to apply timezone fix", e);
-    // Fallback to Winter time offset (2 hours)
-    return timestamp - (2 * 60 * 60 * 1000);
-  }
-};
-
 const prepareNewsItems = (items: NewsItem[]) => {
   const oneDayAgo = Date.now() - ONE_DAY_MS;
 
   const normalized = items
     .map((item) => {
-      const rawTimestamp = resolveTimestamp(item);
-      const timestamp = applyTimezoneFix(rawTimestamp, item.source);
-
+      const timestamp = resolveTimestamp(item);
       return {
         ...item,
         timestamp,
@@ -237,12 +201,8 @@ const extractTimeFromPubDate = (pubDate: string | undefined): string => {
 
 const normalizedDisplayTime = (item: Pick<NewsItem, "timestamp" | "timestampUtc" | "displayTime" | "pubDate">) => {
   // 1. Use displayTime from server if available (it handles extraction logic)
-  // BUT skip this for problematic sources where we want to force our own formatting
-  const source = (item as any).source || "";
-  const isProblematic = PROBLEMATIC_UTC_SOURCES.some(s => source.includes(s));
-
   const trimmedServerValue = (item.displayTime ?? "").trim();
-  if (trimmedServerValue.length > 0 && !isProblematic) {
+  if (trimmedServerValue.length > 0) {
     return trimmedServerValue;
   }
 
