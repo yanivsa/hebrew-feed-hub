@@ -8,7 +8,7 @@ import { fetchLatestNews } from "@/lib/rss-client";
 import type { NewsItem } from "@/types/news";
 
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
-const NEWS_CACHE_KEY = "hebrew-feed-cache:v4-timezone-fix-restored";
+const NEWS_CACHE_KEY = "hebrew-feed-cache:v5-fresh-start";
 const PROBLEMATIC_UTC_SOURCES = ["ישראל היום", "וואלה", "מעריב"];
 
 interface CachedNewsPayload {
