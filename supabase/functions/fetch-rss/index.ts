@@ -103,7 +103,7 @@ function extractTimeFromDateString(dateString: string): string | null {
   // - "13 Nov 2025 21:51:00 GMT"
   // - ISO format: "2025-11-13T21:51:00Z"
   // - ISO format with timezone: "2025-11-13T21:51:00+00:00"
-  
+
   // Try RFC 2822 / HTTP format first
   const rfc2822Match = dateString.match(/(\d{1,2})\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+(\d{4})\s+(\d{1,2}):(\d{2}):(\d{2})/i);
   if (rfc2822Match) {
@@ -111,16 +111,16 @@ function extractTimeFromDateString(dateString: string): string | null {
     const monthName = rfc2822Match[2];
     const hours = rfc2822Match[4].padStart(2, "0");
     const minutes = rfc2822Match[5];
-    
+
     const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
     const monthIndex = monthNames.findIndex(m => m.toLowerCase() === monthName.toLowerCase());
     const month = monthIndex >= 0 ? (monthIndex + 1).toString().padStart(2, "0") : "";
-    
+
     if (month) {
       return `${hours}:${minutes} ${day}/${month}`;
     }
   }
-  
+
   // Try ISO format: "2025-11-13T21:51:00Z" or "2025-11-13T21:51:00+00:00"
   const isoMatch = dateString.match(/(\d{4})-(\d{2})-(\d{2})[T\s]+(\d{1,2}):(\d{2}):(\d{2})/);
   if (isoMatch) {
@@ -129,7 +129,7 @@ function extractTimeFromDateString(dateString: string): string | null {
     const day = isoMatch[3];
     const hours = isoMatch[4].padStart(2, "0");
     const minutes = isoMatch[5];
-    
+
     return `${hours}:${minutes} ${day}/${month}`;
   }
 
@@ -306,7 +306,7 @@ function parseFeedDate(
           !explicitZone && Boolean(fallbackZone),
         );
         logDateDeviation(trimmed, clampedTimestamp, sourceName);
-        
+
         // Always try to extract time directly from original string first
         // This ensures we show the original time without timezone conversion
         let displayTime: string;
@@ -317,7 +317,7 @@ function parseFeedDate(
           // Fallback to formatted time only if extraction fails
           displayTime = toDisplayFormat(normalizedDate, zoneForDisplay);
         }
-        
+
         return {
           timestampUtc: clampedTimestamp,
           displayTime: displayTime,
@@ -359,14 +359,14 @@ async function parseRSSFeed(url: string, sourceName: string): Promise<RSSItem[]>
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
       },
     });
-    
+
     if (!response.ok) {
       console.error(`Failed to fetch ${sourceName}: ${response.status}`);
       return [];
     }
 
     const text = await response.text();
-    
+
     // Parse XML manually (basic parsing)
     const items: RSSItem[] = [];
     const itemRegex = /<item[^>]*>([\s\S]*?)<\/item>/gi;
@@ -377,7 +377,7 @@ async function parseRSSFeed(url: string, sourceName: string): Promise<RSSItem[]>
 
     for (const match of matches) {
       const itemContent = match[1];
-      
+
       const title = extractTagContent(itemContent, ['title']) ?? '';
       const link = extractTagContent(itemContent, ['link']) ?? '';
       const dateString = extractTagContent(itemContent, DATE_TAGS);
@@ -438,7 +438,57 @@ async function parseRSSFeed(url: string, sourceName: string): Promise<RSSItem[]>
         });
       }
     }
-    
+
+    // Parse Sitemap XML (e.g. Hamal)
+    const urlRegex = /<url[^>]*>([\s\S]*?)<\/url>/gi;
+    const urlMatches = text.matchAll(urlRegex);
+
+    for (const match of urlMatches) {
+      const urlContent = match[1];
+
+      // Extract title from <news:title>
+      let title = extractTagContent(urlContent, ['news:title']);
+
+      // If no title found, try to infer from link or use a default
+      if (!title) {
+        continue;
+      }
+
+      const link = extractTagContent(urlContent, ['loc']) ?? '';
+
+      // Extract date from <news:publication_date> or <lastmod>
+      const dateString = extractTagContent(urlContent, ['news:publication_date', 'lastmod']);
+      const parsedDate = parseFeedDate(dateString, link, sourceName);
+
+      if (!parsedDate) {
+        console.warn(`Skipping Sitemap item with invalid date from ${sourceName}: ${title}`);
+        continue;
+      }
+
+      if (parsedDate.timestampUtc < twentyFourHoursAgo) {
+        continue;
+      }
+
+      // Cleanup title if it comes from slug-like format
+      if (title && !title.includes(' ') && title.includes('-')) {
+        title = title.replace(/-/g, ' ');
+      }
+
+      if (title && link) {
+        items.push({
+          title: decodeXmlEntities(title),
+          link,
+          pubDate: dateString ?? '',
+          source: sourceName,
+          timestamp: parsedDate.timestampUtc,
+          timestampUtc: parsedDate.timestampUtc,
+          displayTime: parsedDate.displayTime,
+          sourceTimeZone: parsedDate.sourceTimeZone,
+          parseStrategy: parsedDate.parseStrategy,
+        });
+      }
+    }
+
     console.log(`Parsed ${items.length} items from ${sourceName}`);
     return items;
   } catch (error) {
@@ -518,7 +568,7 @@ Deno.serve(async (req) => {
 
     // Fetch all RSS feeds
     const allItems: RSSItem[] = [];
-    
+
     if (sources) {
       const results = await mapWithConcurrency(
         sources,
