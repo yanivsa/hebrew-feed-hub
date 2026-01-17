@@ -96,7 +96,12 @@ const resolveTimestamp = (item: Pick<NewsItem, "pubDate" | "timestamp" | "timest
 };
 
 const applyTimezoneFix = (timestamp: number, source: string) => {
-  const normalizedSource = source?.trim() || "";
+  if (!source) return timestamp;
+
+  const normalizedSource = source.trim();
+  // Log sources seen to debug exact strings in production
+  console.log(`Processing source: "${normalizedSource}"`);
+
   if (!PROBLEMATIC_UTC_SOURCES.some(s => normalizedSource.includes(s))) {
     return timestamp;
   }
@@ -242,8 +247,12 @@ const extractTimeFromPubDate = (pubDate: string | undefined): string => {
 
 const normalizedDisplayTime = (item: Pick<NewsItem, "timestamp" | "timestampUtc" | "displayTime" | "pubDate">) => {
   // 1. Use displayTime from server if available (it handles extraction logic)
+  // BUT skip this for problematic sources where we want to force our own formatting
+  const source = (item as any).source || "";
+  const isProblematic = PROBLEMATIC_UTC_SOURCES.some(s => source.includes(s));
+
   const trimmedServerValue = (item.displayTime ?? "").trim();
-  if (trimmedServerValue.length > 0) {
+  if (trimmedServerValue.length > 0 && !isProblematic) {
     return trimmedServerValue;
   }
 
