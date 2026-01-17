@@ -120,6 +120,8 @@ function buildParserAttempts(value: string, zoneHint?: string) {
 
   const fallbackZone = zoneHint ?? DEFAULT_FEED_ZONE;
   attempts.push(DateTime.fromFormat(value, 'dd/MM/yyyy HH:mm:ss', { zone: fallbackZone }));
+  // Fallback for stripped dates (Walla/Israel Hayom fix): Format like RFC but without timezone
+  attempts.push(DateTime.fromFormat(value, "ccc, dd LLL yyyy HH:mm:ss", { zone: fallbackZone }));
   attempts.push(
     (() => {
       const jsDate = new Date(value);
@@ -208,19 +210,44 @@ function parseFeedDate(
   }
 
   const trimmed = cleanCdata(rawDate);
-  const sanitizedVariants = new Set<string>();
-  sanitizedVariants.add(trimmed);
-  sanitizedVariants.add(trimmed.replace(/\s+/g, ' '));
+  const normalizedSource = sourceName.toLowerCase();
+  const lyingGmtSources = ['וואלה', 'ישראל היום'];
+  const isLyingGmtSource = lyingGmtSources.some(s => normalizedSource.includes(s));
+  const hasGmtMarker = /(?:GMT|UTC|\+0000|Z)/i.test(trimmed);
 
-  const explicitZone = hasExplicitTimezone(trimmed);
+  // If source claims to be GMT but we know it lies (is actually Jerusalem time), force it.
+  const forceJerusalemZone = isLyingGmtSource && hasGmtMarker;
+  const sanitizedVariants = new Set<string>();
+
+  if (forceJerusalemZone) {
+    // Strip GMT/UTC markers to allow parsing as "local" time in the target zone.
+    // We ONLY use the stripped version to prevent the standard parser from picking up "GMT"
+    // and correctly (but unwantedly) parsing it as UTC.
+    const stripped = trimmed.replace(/GMT|UTC|\+0000|Z/gi, "").trim();
+    sanitizedVariants.add(stripped);
+    sanitizedVariants.add(stripped.replace(/\s+/g, ' '));
+  } else {
+    sanitizedVariants.add(trimmed);
+    sanitizedVariants.add(trimmed.replace(/\s+/g, ' '));
+  }
+
+  const explicitZone = forceJerusalemZone ? false : hasExplicitTimezone(trimmed);
   const abbreviation = explicitZone ? null : extractTimezoneAbbreviation(trimmed);
   if (abbreviation) {
     sanitizedVariants.add(abbreviation.sanitizedValue);
   }
-  const inferredZone = explicitZone ? undefined : abbreviation?.zone ?? inferZone(link, sourceName);
-  const fallbackZone = explicitZone ? undefined : inferredZone ?? DEFAULT_FEED_ZONE;
+
+  const inferredZone = forceJerusalemZone
+    ? DEFAULT_FEED_ZONE
+    : (explicitZone ? undefined : abbreviation?.zone ?? inferZone(link, sourceName));
+
+  const fallbackZone = forceJerusalemZone
+    ? DEFAULT_FEED_ZONE
+    : (explicitZone ? undefined : inferredZone ?? DEFAULT_FEED_ZONE);
 
   for (const variant of sanitizedVariants) {
+    // If forcing zone, pass it as zoneHint.
+    // If we stripped the timezone, buildParserAttempts will use zoneHint.
     const parsers = buildParserAttempts(variant, inferredZone);
     for (const dt of parsers) {
       if (dt.isValid) {
