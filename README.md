@@ -71,3 +71,27 @@ Yes, you can!
 To connect a domain, navigate to Project > Settings > Domains and click Connect Domain.
 
 Read more here: [Setting up a custom domain](https://docs.lovable.dev/features/custom-domain#custom-domain)
+
+## Local environment variables
+
+Create a `.env.local` file in the project root before running `npm run dev`:
+
+```bash
+VITE_SUPABASE_URL=https://<your-project-ref>.supabase.co
+VITE_SUPABASE_PUBLISHABLE_KEY=<your-anon-key>
+VITE_APP_VERSION=v0.3.0
+```
+
+You can retrieve the Supabase URL and anon key directly from Lovable:
+
+1. Open your Lovable project → **Settings → Integrations → Supabase**.
+2. Copy the URL and anon key into `.env.local`.
+
+> ℹ️ The Supabase project that backs this Lovable app is `ipcqgzxibyswowtputdm` (see `supabase/config.toml`).  
+> You can visit [Supabase Studio](https://supabase.com/dashboard/project/ipcqgzxibyswowtputdm/editor) with your Supabase credentials to inspect tables, run SQL, or invite collaborators.  
+> All RSS data lives in the `public.rss_sources` table, and the Edge Function `fetch-rss` runs under this project.
+
+### Version badge
+
+Every code change should bump the version that appears on the homepage.  
+Update `VITE_APP_VERSION` (or the fallback inside `src/version.ts`) before merging. This keeps the badge in the header in sync with the deployed build and makes it easy to track which revision is live.

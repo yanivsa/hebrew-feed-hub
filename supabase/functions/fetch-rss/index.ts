@@ -26,6 +26,7 @@ const DISPLAY_FORMAT = 'HH:mm dd/LL';
 const DATE_TAGS = ['pubDate', 'updated', 'dc:date', 'published'];
 const MAX_FUTURE_DRIFT_MS = 10 * 60 * 1000; // 10 minutes
 const DATE_DEVIATION_WARNING_MINUTES = 180;
+const MAX_CONCURRENT_FEEDS = 5;
 const ISRAELI_DOMAINS = [
   'ynet.co.il',
   'walla.co.il',
@@ -49,19 +50,89 @@ const TIMEZONE_ABBREVIATIONS: Record<string, string> = {
   EEST: 'Europe/Athens',
   AST: DEFAULT_FEED_ZONE,
 };
+const XML_ENTITY_MAP: Record<string, string> = {
+  '&quot;': '"',
+  '&apos;': "'",
+  '&amp;': '&',
+  '&lt;': '<',
+  '&gt;': '>',
+  '&amp;quot;': '"',
+  '&amp;apos;': "'",
+  '&amp;lt;': '<',
+  '&amp;gt;': '>',
+};
+const TAG_REGEX_CACHE = new Map<string, RegExp>();
 
 function cleanCdata(value: string) {
   return value.replace(/<!\[CDATA\[(.*?)\]\]>/g, '$1').trim();
 }
 
+function decodeXmlEntities(value: string) {
+  return value.replace(
+    /&amp;(?:quot|apos|lt|gt);|&quot;|&apos;|&amp;|&lt;|&gt;/g,
+    (match) => XML_ENTITY_MAP[match] ?? match,
+  );
+}
+
+function getTagRegex(tag: string) {
+  const cached = TAG_REGEX_CACHE.get(tag);
+  if (cached) {
+    return cached;
+  }
+  const regex = new RegExp(`<${tag}[^>]*>([\\s\\S]*?)<\\/${tag}>`, 'i');
+  TAG_REGEX_CACHE.set(tag, regex);
+  return regex;
+}
+
 function extractTagContent(itemContent: string, tagNames: string[]): string | null {
   for (const tag of tagNames) {
-    const regex = new RegExp(`<${tag}[^>]*>([\\s\\S]*?)<\\/${tag}>`, 'i');
+    const regex = getTagRegex(tag);
     const match = itemContent.match(regex);
     if (match) {
       return cleanCdata(match[1]);
     }
   }
+  return null;
+}
+
+function extractTimeFromDateString(dateString: string): string | null {
+  // Extract time and date directly from date string
+  // Supports formats like:
+  // - "Thu, 13 Nov 2025 21:51:00 GMT"
+  // - "Wed, 12 Nov 2025 21:19:00 GMT"
+  // - "13 Nov 2025 21:51:00 GMT"
+  // - ISO format: "2025-11-13T21:51:00Z"
+  // - ISO format with timezone: "2025-11-13T21:51:00+00:00"
+  
+  // Try RFC 2822 / HTTP format first
+  const rfc2822Match = dateString.match(/(\d{1,2})\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+(\d{4})\s+(\d{1,2}):(\d{2}):(\d{2})/i);
+  if (rfc2822Match) {
+    const day = rfc2822Match[1].padStart(2, "0");
+    const monthName = rfc2822Match[2];
+    const hours = rfc2822Match[4].padStart(2, "0");
+    const minutes = rfc2822Match[5];
+    
+    const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    const monthIndex = monthNames.findIndex(m => m.toLowerCase() === monthName.toLowerCase());
+    const month = monthIndex >= 0 ? (monthIndex + 1).toString().padStart(2, "0") : "";
+    
+    if (month) {
+      return `${hours}:${minutes} ${day}/${month}`;
+    }
+  }
+  
+  // Try ISO format: "2025-11-13T21:51:00Z" or "2025-11-13T21:51:00+00:00"
+  const isoMatch = dateString.match(/(\d{4})-(\d{2})-(\d{2})[T\s]+(\d{1,2}):(\d{2}):(\d{2})/);
+  if (isoMatch) {
+    const year = isoMatch[1];
+    const month = isoMatch[2];
+    const day = isoMatch[3];
+    const hours = isoMatch[4].padStart(2, "0");
+    const minutes = isoMatch[5];
+    
+    return `${hours}:${minutes} ${day}/${month}`;
+  }
+
   return null;
 }
 
@@ -235,9 +306,21 @@ function parseFeedDate(
           !explicitZone && Boolean(fallbackZone),
         );
         logDateDeviation(trimmed, clampedTimestamp, sourceName);
+        
+        // Always try to extract time directly from original string first
+        // This ensures we show the original time without timezone conversion
+        let displayTime: string;
+        const extractedTime = extractTimeFromDateString(trimmed);
+        if (extractedTime) {
+          displayTime = extractedTime;
+        } else {
+          // Fallback to formatted time only if extraction fails
+          displayTime = toDisplayFormat(normalizedDate, zoneForDisplay);
+        }
+        
         return {
           timestampUtc: clampedTimestamp,
-          displayTime: toDisplayFormat(normalizedDate, zoneForDisplay),
+          displayTime: displayTime,
           sourceTimeZone: zoneForDisplay,
           parseStrategy: explicitZone ? "explicit" : "inferred",
         };
@@ -311,7 +394,7 @@ async function parseRSSFeed(url: string, sourceName: string): Promise<RSSItem[]>
 
       if (title && link) {
         items.push({
-          title: title.replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>'),
+          title: decodeXmlEntities(title),
           link,
           pubDate: dateString ?? '',
           source: sourceName,
@@ -343,7 +426,7 @@ async function parseRSSFeed(url: string, sourceName: string): Promise<RSSItem[]>
 
       if (title && link) {
         items.push({
-          title: title.replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>'),
+          title: decodeXmlEntities(title),
           link,
           pubDate: dateString ?? '',
           source: sourceName,
@@ -383,6 +466,32 @@ function sortAndValidateItems(items: RSSItem[]): RSSItem[] {
   return sorted;
 }
 
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  limit: number,
+  fn: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  if (items.length === 0) {
+    return [];
+  }
+
+  const results = new Array<R>(items.length);
+  let nextIndex = 0;
+  const workerCount = Math.min(limit, items.length);
+  const workers = Array.from({ length: workerCount }, async () => {
+    while (true) {
+      const currentIndex = nextIndex++;
+      if (currentIndex >= items.length) {
+        break;
+      }
+      results[currentIndex] = await fn(items[currentIndex], currentIndex);
+    }
+  });
+
+  await Promise.all(workers);
+  return results;
+}
+
 Deno.serve(async (req) => {
   // Handle CORS preflight requests
   if (req.method === 'OPTIONS') {
@@ -411,8 +520,11 @@ Deno.serve(async (req) => {
     const allItems: RSSItem[] = [];
     
     if (sources) {
-      const fetchPromises = sources.map((source) => parseRSSFeed(source.url, source.name));
-      const results = await Promise.all(fetchPromises);
+      const results = await mapWithConcurrency(
+        sources,
+        MAX_CONCURRENT_FEEDS,
+        (source) => parseRSSFeed(source.url, source.name),
+      );
       for (const items of results) {
         allItems.push(...items);
       }

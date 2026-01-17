@@ -1,7 +1,7 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Link } from "react-router-dom";
-import { ArrowRight, Plus, Trash2 } from "lucide-react";
+import { ArrowRight, LogOut, Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -14,6 +14,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import type { Session } from "@supabase/supabase-js";
 
 interface RSSSource {
   id: string;
@@ -26,10 +27,23 @@ const Admin = () => {
   const [sources, setSources] = useState<RSSSource[]>([]);
   const [loading, setLoading] = useState(true);
   const [newSource, setNewSource] = useState({ name: "", url: "" });
+  const [session, setSession] = useState<Session | null>(null);
+  const [authInitializing, setAuthInitializing] = useState(true);
+  const [loginEmail, setLoginEmail] = useState("");
+  const [loginPassword, setLoginPassword] = useState("");
+  const [loginLoading, setLoginLoading] = useState(false);
+  const [loginError, setLoginError] = useState<string | null>(null);
   const { toast } = useToast();
 
-  const fetchSources = async () => {
+  const fetchSources = useCallback(async () => {
+    if (!session) {
+      setSources([]);
+      setLoading(false);
+      return;
+    }
+
     try {
+      setLoading(true);
       const { data, error } = await supabase
         .from('rss_sources')
         .select('*')
@@ -47,15 +61,41 @@ const Admin = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [session, toast]);
 
   useEffect(() => {
-    fetchSources();
+    const init = async () => {
+      const { data } = await supabase.auth.getSession();
+      setSession(data.session);
+      setAuthInitializing(false);
+    };
+
+    const { data: authListener } = supabase.auth.onAuthStateChange((_event, newSession) => {
+      setSession(newSession);
+      if (!newSession) {
+        setSources([]);
+        setLoading(false);
+      }
+    });
+
+    void init();
+
+    return () => {
+      authListener.subscription.unsubscribe();
+    };
   }, []);
+
+  useEffect(() => {
+    if (session) {
+      void fetchSources();
+    }
+  }, [session, fetchSources]);
 
   const handleAddSource = async (e: React.FormEvent) => {
     e.preventDefault();
     
+    if (!session) return;
+
     if (!newSource.name || !newSource.url) {
       toast({
         title: "שגיאה",
@@ -90,6 +130,8 @@ const Admin = () => {
   };
 
   const handleToggleActive = async (id: string, currentActive: boolean) => {
+    if (!session) return;
+
     try {
       const { error } = await supabase
         .from('rss_sources')
@@ -116,6 +158,8 @@ const Admin = () => {
   const handleDeleteSource = async (id: string) => {
     if (!confirm('האם אתה בטוח שברצונך למחוק מקור זה?')) return;
 
+    if (!session) return;
+
     try {
       const { error } = await supabase
         .from('rss_sources')
@@ -139,6 +183,83 @@ const Admin = () => {
     }
   };
 
+  const handleLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoginLoading(true);
+    setLoginError(null);
+
+    try {
+      const { error } = await supabase.auth.signInWithPassword({
+        email: loginEmail,
+        password: loginPassword,
+      });
+
+      if (error) {
+        setLoginError(error.message);
+        return;
+      }
+
+      toast({
+        title: "ברוך הבא",
+        description: "התחברת בהצלחה",
+      });
+
+      setLoginEmail("");
+      setLoginPassword("");
+    } finally {
+      setLoginLoading(false);
+    }
+  };
+
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
+    toast({
+      title: "התנתקת",
+      description: "החיבור נותק בהצלחה",
+    });
+  };
+
+  const renderLoginCard = () => (
+    <Card className="max-w-md mx-auto mt-12">
+      <CardHeader>
+        <CardTitle>התחברות למערכת</CardTitle>
+        <CardDescription>יש להזין את פרטי המשתמש שאושר ב-Supabase</CardDescription>
+      </CardHeader>
+      <CardContent>
+        <form className="space-y-4" onSubmit={handleLogin}>
+          <div className="space-y-2">
+            <Label htmlFor="admin-email">אימייל</Label>
+            <Input
+              id="admin-email"
+              type="email"
+              value={loginEmail}
+              onChange={(e) => setLoginEmail(e.target.value)}
+              placeholder="admin@example.com"
+              required
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="admin-password">סיסמה</Label>
+            <Input
+              id="admin-password"
+              type="password"
+              value={loginPassword}
+              onChange={(e) => setLoginPassword(e.target.value)}
+              placeholder="••••••••"
+              required
+            />
+          </div>
+          {loginError && (
+            <p className="text-sm text-destructive">{loginError}</p>
+          )}
+          <Button type="submit" className="w-full" disabled={loginLoading}>
+            {loginLoading ? "מתחבר..." : "התחבר"}
+          </Button>
+        </form>
+      </CardContent>
+    </Card>
+  );
+
   return (
     <div className="min-h-screen bg-background">
       {/* Header */}
@@ -155,92 +276,110 @@ const Admin = () => {
       </header>
 
       <main className="max-w-4xl mx-auto py-8 px-6">
-        {/* Add New Source */}
-        <Card className="mb-8">
-          <CardHeader>
-            <CardTitle>הוספת מקור חדש</CardTitle>
-            <CardDescription>הוסף מקור RSS חדש לרשימת החדשות</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <form onSubmit={handleAddSource} className="space-y-4">
-              <div className="grid gap-4 md:grid-cols-2">
-                <div className="space-y-2">
-                  <Label htmlFor="name">שם המקור</Label>
-                  <Input
-                    id="name"
-                    value={newSource.name}
-                    onChange={(e) => setNewSource({ ...newSource, name: e.target.value })}
-                    placeholder="לדוגמה: ישראל היום"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="url">כתובת RSS</Label>
-                  <Input
-                    id="url"
-                    type="url"
-                    value={newSource.url}
-                    onChange={(e) => setNewSource({ ...newSource, url: e.target.value })}
-                    placeholder="https://example.com/rss"
-                  />
-                </div>
-              </div>
-              <Button type="submit">
-                <Plus className="h-4 w-4 ml-2" />
-                הוסף מקור
-              </Button>
-            </form>
-          </CardContent>
-        </Card>
+        {authInitializing ? (
+          <p className="text-center text-muted-foreground py-8">טוען...</p>
+        ) : null}
 
-        {/* Sources List */}
-        <Card>
-          <CardHeader>
-            <CardTitle>מקורות RSS קיימים</CardTitle>
-            <CardDescription>ניהול המקורות הפעילים במערכת</CardDescription>
-          </CardHeader>
-          <CardContent>
-            {loading ? (
-              <p className="text-center text-muted-foreground py-8">טוען...</p>
-            ) : sources.length === 0 ? (
-              <p className="text-center text-muted-foreground py-8">אין מקורות במערכת</p>
-            ) : (
-              <div className="space-y-4">
-                {sources.map((source) => (
-                  <div
-                    key={source.id}
-                    className="flex items-center justify-between p-4 border border-border rounded-lg hover:bg-accent/50 transition-colors"
-                  >
-                    <div className="flex-1 space-y-1">
-                      <h3 className="font-semibold">{source.name}</h3>
-                      <p className="text-sm text-muted-foreground break-all">{source.url}</p>
+        {!authInitializing && !session ? renderLoginCard() : null}
+
+        {session && (
+          <>
+            {/* Add New Source */}
+            <Card className="mb-8">
+              <CardHeader>
+                <CardTitle>הוספת מקור חדש</CardTitle>
+                <CardDescription>הוסף מקור RSS חדש לרשימת החדשות</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <form onSubmit={handleAddSource} className="space-y-4">
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <div className="space-y-2">
+                      <Label htmlFor="name">שם המקור</Label>
+                      <Input
+                        id="name"
+                        value={newSource.name}
+                        onChange={(e) => setNewSource({ ...newSource, name: e.target.value })}
+                        placeholder="לדוגמה: ישראל היום"
+                      />
                     </div>
-                    <div className="flex items-center gap-3 mr-4">
-                      <div className="flex items-center gap-2">
-                        <Label htmlFor={`active-${source.id}`} className="text-sm">
-                          {source.active ? 'פעיל' : 'מושבת'}
-                        </Label>
-                        <Switch
-                          id={`active-${source.id}`}
-                          checked={source.active}
-                          onCheckedChange={() => handleToggleActive(source.id, source.active)}
-                        />
-                      </div>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={() => handleDeleteSource(source.id)}
-                        className="text-destructive hover:text-destructive hover:bg-destructive/10"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
+                    <div className="space-y-2">
+                      <Label htmlFor="url">כתובת RSS</Label>
+                      <Input
+                        id="url"
+                        type="url"
+                        value={newSource.url}
+                        onChange={(e) => setNewSource({ ...newSource, url: e.target.value })}
+                        placeholder="https://example.com/rss"
+                      />
                     </div>
                   </div>
-                ))}
-              </div>
-            )}
-          </CardContent>
-        </Card>
+                  <Button type="submit">
+                    <Plus className="h-4 w-4 ml-2" />
+                    הוסף מקור
+                  </Button>
+                </form>
+              </CardContent>
+            </Card>
+
+            {/* Sources List */}
+            <Card>
+              <CardHeader>
+                <CardTitle>מקורות RSS קיימים</CardTitle>
+                <CardDescription>ניהול המקורות הפעילים במערכת</CardDescription>
+              </CardHeader>
+              <CardContent>
+                {loading ? (
+                  <p className="text-center text-muted-foreground py-8">טוען...</p>
+                ) : sources.length === 0 ? (
+                  <p className="text-center text-muted-foreground py-8">אין מקורות במערכת</p>
+                ) : (
+                  <div className="space-y-4">
+                    {sources.map((source) => (
+                      <div
+                        key={source.id}
+                        className="flex items-center justify-between p-4 border border-border rounded-lg hover:bg-accent/50 transition-colors"
+                      >
+                        <div className="flex-1 space-y-1">
+                          <h3 className="font-semibold">{source.name}</h3>
+                          <p className="text-sm text-muted-foreground break-all">{source.url}</p>
+                        </div>
+                        <div className="flex items-center gap-3 mr-4">
+                          <div className="flex items-center gap-2">
+                            <Label htmlFor={`active-${source.id}`} className="text-sm">
+                              {source.active ? 'פעיל' : 'מושבת'}
+                            </Label>
+                            <Switch
+                              id={`active-${source.id}`}
+                              checked={source.active}
+                              onCheckedChange={() => handleToggleActive(source.id, source.active)}
+                            />
+                          </div>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => handleDeleteSource(source.id)}
+                            className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </>
+        )}
       </main>
+      {session && (
+        <div className="fixed bottom-4 left-4">
+          <Button variant="outline" onClick={handleLogout}>
+            <LogOut className="h-4 w-4 ml-2" />
+            התנתק
+          </Button>
+        </div>
+      )}
     </div>
   );
 };
