@@ -20,16 +20,7 @@ const applyTimezoneFix = (timestamp: number, source: string) => {
   return timestamp - (offsetHours * 60 * 60 * 1000);
 };
 
-interface DebugItem {
-  timestampUtc?: number;
-  timestamp?: number;
-  pubDate: string;
-  source: string;
-  title: string;
-  [key: string]: unknown;
-}
-
-const resolveTimestamp = (item: DebugItem) => {
+const resolveTimestamp = (item: any) => {
   if (typeof item.timestampUtc === "number" && Number.isFinite(item.timestampUtc)) {
     return item.timestampUtc;
   }
@@ -39,7 +30,7 @@ const resolveTimestamp = (item: DebugItem) => {
   return Date.parse(item.pubDate);
 };
 
-const prepareNewsItems = (items: DebugItem[]) => {
+const prepareNewsItems = (items: any[]) => {
   const normalized = items
     .map((item) => {
       const rawTimestamp = resolveTimestamp(item);
@@ -48,7 +39,7 @@ const prepareNewsItems = (items: DebugItem[]) => {
     })
     .filter((item) => Number.isFinite(item.timestamp));
 
-  normalized.sort((a, b) => b.timestamp - a.timestamp!);
+  normalized.sort((a, b) => b.timestamp - a.timestamp);
   return normalized;
 };
 

@@ -8,7 +8,7 @@ import { fetchLatestNews } from "@/lib/rss-client";
 import type { NewsItem } from "@/types/news";
 
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
-const NEWS_CACHE_KEY = "hebrew-feed-cache:v5-fresh-start";
+const NEWS_CACHE_KEY = "hebrew-feed-cache:v4-timezone-fix-restored";
 const PROBLEMATIC_UTC_SOURCES = ["ישראל היום", "וואלה", "מעריב"];
 
 interface CachedNewsPayload {
@@ -235,9 +235,10 @@ const extractTimeFromPubDate = (pubDate: string | undefined): string => {
   return "";
 };
 
-const normalizedDisplayTime = (item: Pick<NewsItem, "timestamp" | "timestampUtc" | "displayTime" | "pubDate"> & { source?: string }) => {
+const normalizedDisplayTime = (item: Pick<NewsItem, "timestamp" | "timestampUtc" | "displayTime" | "pubDate">) => {
   // 1. Use displayTime from server if available (it handles extraction logic)
-  const source = item.source || "";
+  // BUT skip this for problematic sources where we want to force our own formatting
+  const source = (item as any).source || "";
   const isProblematic = PROBLEMATIC_UTC_SOURCES.some(s => source.includes(s));
 
   const trimmedServerValue = (item.displayTime ?? "").trim();
