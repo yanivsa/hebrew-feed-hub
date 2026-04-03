@@ -182,26 +182,21 @@ function extractTimezoneAbbreviation(value: string) {
 }
 
 function buildParserAttempts(value: string, zoneHint?: string) {
-    const attempts = [
-        zoneHint ? DateTime.fromRFC2822(value, { zone: zoneHint }) : DateTime.fromRFC2822(value, { setZone: true }),
-        zoneHint ? DateTime.fromHTTP(value, { zone: zoneHint }) : DateTime.fromHTTP(value, { setZone: true }),
-        zoneHint ? DateTime.fromISO(value, { zone: zoneHint }) : DateTime.fromISO(value, { setZone: true }),
-        DateTime.fromFormat(value, "ccc, dd LLL yyyy HH:mm:ss 'GMT'", { zone: 'UTC' }),
-    ];
-
     const fallbackZone = zoneHint ?? DEFAULT_FEED_ZONE;
-    attempts.push(DateTime.fromFormat(value, 'dd/MM/yyyy HH:mm:ss', { zone: fallbackZone }));
-    attempts.push(
-        (() => {
+    return [
+        () => zoneHint ? DateTime.fromRFC2822(value, { zone: zoneHint }) : DateTime.fromRFC2822(value, { setZone: true }),
+        () => zoneHint ? DateTime.fromHTTP(value, { zone: zoneHint }) : DateTime.fromHTTP(value, { setZone: true }),
+        () => zoneHint ? DateTime.fromISO(value, { zone: zoneHint }) : DateTime.fromISO(value, { setZone: true }),
+        () => DateTime.fromFormat(value, "ccc, dd LLL yyyy HH:mm:ss 'GMT'", { zone: 'UTC' }),
+        () => DateTime.fromFormat(value, 'dd/MM/yyyy HH:mm:ss', { zone: fallbackZone }),
+        () => {
             const jsDate = new Date(value);
             if (Number.isNaN(jsDate.getTime())) {
                 return DateTime.invalid('Invalid JS Date');
             }
             return DateTime.fromJSDate(jsDate, { zone: fallbackZone });
-        })(),
-    );
-
-    return attempts;
+        }
+    ];
 }
 
 function normalizeToFallbackZone(dt: DateTime, explicitZone: boolean, fallbackZone?: string) {
@@ -293,7 +288,8 @@ function parseFeedDate(
 
     for (const variant of sanitizedVariants) {
         const parsers = buildParserAttempts(variant, inferredZone);
-        for (const dt of parsers) {
+        for (const getDt of parsers) {
+            const dt = getDt();
             if (dt.isValid) {
                 const normalizedDate = normalizeToFallbackZone(dt, explicitZone, fallbackZone);
                 const zoneForDisplay = explicitZone
