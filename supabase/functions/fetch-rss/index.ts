@@ -42,6 +42,10 @@ const ISRAELI_DOMAINS = [
     'calcalist.co.il',
     'channel7',
 ];
+const MONTH_MAP: Record<string, string> = {
+    jan: '01', feb: '02', mar: '03', apr: '04', may: '05', jun: '06',
+    jul: '07', aug: '08', sep: '09', oct: '10', nov: '11', dec: '12',
+};
 const TIMEZONE_ABBREVIATIONS: Record<string, string> = {
     IDT: DEFAULT_FEED_ZONE,
     IST: DEFAULT_FEED_ZONE,
@@ -112,9 +116,7 @@ function extractTimeFromDateString(dateString: string): string | null {
         const hours = rfc2822Match[4].padStart(2, "0");
         const minutes = rfc2822Match[5];
 
-        const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-        const monthIndex = monthNames.findIndex(m => m.toLowerCase() === monthName.toLowerCase());
-        const month = monthIndex >= 0 ? (monthIndex + 1).toString().padStart(2, "0") : "";
+        const month = MONTH_MAP[monthName.toLowerCase()] || "";
 
         if (month) {
             return `${hours}:${minutes} ${day}/${month}`;
