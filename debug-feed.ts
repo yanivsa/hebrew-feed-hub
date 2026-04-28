@@ -1,7 +1,13 @@
 
-const SUPABASE_URL = "https://ipcqgzxibyswowtputdm.supabase.co";
-const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlwY3FnenhpYnlzd293dHB1dGRtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjI4MjkzOTAsImV4cCI6MjA3ODQwNTM5MH0.gudQpBKhKhunR67WAGQNvoECakOKS2GlAMmy6E58RoY";
+const SUPABASE_URL = process.env.VITE_SUPABASE_URL;
+const SUPABASE_ANON_KEY = process.env.VITE_SUPABASE_PUBLISHABLE_KEY;
 const PROBLEMATIC_UTC_SOURCES = ["ישראל היום", "וואלה"];
+
+if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+  console.error("Error: VITE_SUPABASE_URL and VITE_SUPABASE_PUBLISHABLE_KEY environment variables are required.");
+  console.error("Run with: VITE_SUPABASE_URL=... VITE_SUPABASE_PUBLISHABLE_KEY=... bun debug-feed.ts");
+  process.exit(1);
+}
 
 const FUNCTION_URL = `${SUPABASE_URL}/functions/v1/fetch-rss`;
 
@@ -20,17 +26,17 @@ const applyTimezoneFix = (timestamp: number, source: string) => {
   return timestamp - (offsetHours * 60 * 60 * 1000);
 };
 
-const resolveTimestamp = (item: any) => {
+const resolveTimestamp = (item: Record<string, unknown>) => {
   if (typeof item.timestampUtc === "number" && Number.isFinite(item.timestampUtc)) {
     return item.timestampUtc;
   }
   if (typeof item.timestamp === "number" && Number.isFinite(item.timestamp)) {
     return item.timestamp;
   }
-  return Date.parse(item.pubDate);
+  return Date.parse(item.pubDate as string);
 };
 
-const prepareNewsItems = (items: any[]) => {
+const prepareNewsItems = (items: Array<Record<string, unknown>>) => {
   const normalized = items
     .map((item) => {
       const rawTimestamp = resolveTimestamp(item);
