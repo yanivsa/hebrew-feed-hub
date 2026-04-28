@@ -28,3 +28,6 @@ jobs:
 
     - name: Build project
       run: npm run build
+      env:
+        VITE_SUPABASE_URL: https://placeholder.supabase.co
+        VITE_SUPABASE_PUBLISHABLE_KEY: placeholder-key
