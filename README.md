@@ -91,6 +91,10 @@ You can retrieve the Supabase URL and anon key directly from Lovable:
 > You can visit [Supabase Studio](https://supabase.com/dashboard/project/ipcqgzxibyswowtputdm/editor) with your Supabase credentials to inspect tables, run SQL, or invite collaborators.  
 > All RSS data lives in the `public.rss_sources` table, and the Edge Function `fetch-rss` runs under this project.
 
+### Supabase Migrations and Security
+
+**Important**: Ensure that all Supabase migrations in the `supabase/migrations/` directory are applied to your project. Specifically, make sure `20251111050000_secure_rss_sources.sql` is applied, as it hardens Row Level Security (RLS) policies on the `rss_sources` table to prevent unauthorized modifications.
+
 ### Version badge
 
 Every code change should bump the version that appears on the homepage.  
